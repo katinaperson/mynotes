@@ -616,9 +616,9 @@ function renderList(){
 
 /* ENTRY FORM */
 function openNewEntry(){
-  // Generate a unique key so multiple notes on same day each get their own slot
+  // Always generate a fresh unique key — never reuse an existing one
   const now=new Date();
-  curKey=dk(midnight(now))+'_'+Date.now();
+  curKey='new_'+Date.now(); // placeholder key until saved
   curAttach=[];
   const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -626,10 +626,20 @@ function openNewEntry(){
   document.getElementById('note-title').value='';
   const editor=document.getElementById('rte-editor');
   editor.innerHTML='';
+  editor.textContent='';
   document.querySelector('.rte-toolbar').style.display='flex';
   document.getElementById('note-title').placeholder='Note title (optional)…';
   editor.setAttribute('data-placeholder','Write your note here — no rules, no format required…');
-  renderCatPills();
+  // Render pills with nothing selected since this is a brand new note
+  const container=document.getElementById('cat-pills');container.innerHTML='';
+  CATS.forEach(c=>{
+    const btn=document.createElement('button');
+    btn.className='cat-pill'; // none selected
+    btn.dataset.catId=c.id;
+    btn.innerHTML=`<div class="cp-dot" style="background:${c.color}"></div>${c.name}`;
+    btn.onclick=()=>btn.classList.toggle('selected');
+    container.appendChild(btn);
+  });
   renderAttach();
   document.getElementById('delete-btn').style.display='none';
   hide('list-view');show('form-view');
@@ -691,11 +701,14 @@ function saveEntry(andNew){
   const title=document.getElementById('note-title').value.trim();
   const cats=getSelectedCats();
   const hasContent=text.trim()||title||cats.length||curAttach.length;
+  // If curKey is a placeholder, assign a real key now
+  if(curKey.startsWith('new_')){
+    curKey=dk(midnight(new Date()))+'_'+Date.now();
+  }
   if(hasContent){S.entries[curKey]={title,html,text,cats,attachments:curAttach,updated:new Date().toISOString()};}
   else{delete S.entries[curKey];}
   save();renderCatFilter();renderList();renderCal();
   if(andNew){
-    // Stay on form but clear everything for a fresh note
     openNewEntry();
     toast('Saved ✦ — ready for your next note');
   } else {
