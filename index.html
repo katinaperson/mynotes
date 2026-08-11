@@ -441,7 +441,8 @@ mark { background: rgba(196,135,154,0.2); border-radius: 2px; padding: 0 2px; }
             <button class="btn-danger" id="delete-btn" onclick="deleteEntry()" style="display:none">Delete note</button>
             <div class="save-row-right">
               <button class="btn-ghost" onclick="backToList()">Cancel</button>
-              <button class="btn-primary" onclick="saveEntry()">Save Note</button>
+              <button class="btn-primary" onclick="saveEntry(true)" style="background:var(--ink-lt);margin-right:6px">Save &amp; New Note</button>
+              <button class="btn-primary" onclick="saveEntry(false)">Save Note</button>
             </div>
           </div>
         </div>
@@ -550,7 +551,7 @@ function renderCal() {
     const key=dk(dt);
     const btn=document.createElement('button');btn.className='cal-d';btn.textContent=d;
     if(dt.getTime()===today.getTime())btn.classList.add('today');
-    if(S.entries[key])btn.classList.add('has-entry');
+    if(Object.keys(S.entries).some(k=>k===key||k.startsWith(key+'_')))btn.classList.add('has-entry');
     if(key===curKey)btn.classList.add('selected');
     btn.onclick=()=>openEntry(dt);
     grid.appendChild(btn);
@@ -599,22 +600,47 @@ function renderList(){
   }
   cards.innerHTML='';
   entries.forEach(([key,entry])=>{
-    const d=new Date(key+'T12:00:00');
+    // Key may be 'YYYY-MM-DD' or 'YYYY-MM-DD_timestamp' — extract date part
+    const datePart=key.split('_')[0];
+    const d=new Date(datePart+'T12:00:00');
     const dateLabel=`${DAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
     const cats=(entry.cats||[]).map(id=>{const c=CATS.find(x=>x.id===id);return c?`<span class="cat-tag" style="border-color:${c.color};color:${c.color}">${c.name}</span>`:''}).join('');
     const preview=(entry.text||entry.html||'').replace(/<[^>]*>/g,'').slice(0,160);
     const hasAttach=entry.attachments&&entry.attachments.length>0;
     const card=document.createElement('div');card.className='entry-card';
     card.innerHTML=`<div class="entry-card-hdr"><div class="entry-card-date">${dateLabel}</div><div class="entry-card-cats">${cats}</div></div>${entry.title?`<div class="entry-card-title">${esc(entry.title)}</div>`:''}${preview?`<div class="entry-card-preview">${esc(preview)}</div>`:''}${hasAttach?`<div class="entry-card-attach">📎 ${entry.attachments.length} attachment${entry.attachments.length>1?'s':''}</div>`:''}`;
-    card.onclick=()=>openEntry(new Date(key+'T12:00:00'));
+    card.onclick=()=>openEntryByKey(key);
     cards.appendChild(card);
   });
 }
 
 /* ENTRY FORM */
-function openNewEntry(){openEntry(new Date());}
+function openNewEntry(){
+  // Generate a unique key so multiple notes on same day each get their own slot
+  const now=new Date();
+  curKey=dk(midnight(now))+'_'+Date.now();
+  curAttach=[];
+  const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('form-date-display').textContent=`${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+  document.getElementById('note-title').value='';
+  const editor=document.getElementById('rte-editor');
+  editor.innerHTML='';
+  document.querySelector('.rte-toolbar').style.display='flex';
+  document.getElementById('note-title').placeholder='Note title (optional)…';
+  editor.setAttribute('data-placeholder','Write your note here — no rules, no format required…');
+  renderCatPills();
+  renderAttach();
+  document.getElementById('delete-btn').style.display='none';
+  hide('list-view');show('form-view');
+  calY=now.getFullYear();calM=now.getMonth();renderCal();
+}
 function openEntry(date){
-  const dt=midnight(date);curKey=dk(dt);
+  const dt=midnight(date);
+  // When clicking a calendar date, find the most recent note for that date
+  const datePrefix=dk(dt);
+  const matchingKeys=Object.keys(S.entries).filter(k=>k===datePrefix||k.startsWith(datePrefix+'_')).sort();
+  curKey=matchingKeys.length?matchingKeys[matchingKeys.length-1]:datePrefix;
   curAttach=S.entries[curKey]?.attachments?[...S.entries[curKey].attachments]:[];
   const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -642,20 +668,22 @@ function openEntry(date){
   calY=dt.getFullYear();calM=dt.getMonth();renderCal();
 }
 function renderCatPills(){
-  const selected=S.entries[curKey]?.cats||[];
+  const entry=S.entries[curKey];
+  const selected=entry?.cats||[];
   const container=document.getElementById('cat-pills');container.innerHTML='';
   CATS.forEach(c=>{
     const btn=document.createElement('button');
     btn.className='cat-pill'+(selected.includes(c.id)?' selected':'');
+    btn.dataset.catId=c.id;
     btn.innerHTML=`<div class="cp-dot" style="background:${c.color}"></div>${c.name}`;
     btn.onclick=()=>btn.classList.toggle('selected');
     container.appendChild(btn);
   });
 }
 function getSelectedCats(){
-  return Array.from(document.querySelectorAll('#cat-pills .cat-pill.selected')).map((btn,i)=>CATS[i].id);
+  return Array.from(document.querySelectorAll('#cat-pills .cat-pill.selected')).map(btn=>btn.dataset.catId);
 }
-function saveEntry(){
+function saveEntry(andNew){
   if(!curKey)return;
   const editor=document.getElementById('rte-editor');
   const html=editor.innerHTML;
@@ -665,11 +693,40 @@ function saveEntry(){
   const hasContent=text.trim()||title||cats.length||curAttach.length;
   if(hasContent){S.entries[curKey]={title,html,text,cats,attachments:curAttach,updated:new Date().toISOString()};}
   else{delete S.entries[curKey];}
-  save();renderCatFilter();renderList();backToList();toast('Note saved ✦');
+  save();renderCatFilter();renderList();renderCal();
+  if(andNew){
+    // Stay on form but clear everything for a fresh note
+    openNewEntry();
+    toast('Saved ✦ — ready for your next note');
+  } else {
+    backToList();
+    toast('Note saved ✦');
+  }
 }
 function deleteEntry(){show('delete-modal');}
 function confirmDelete(){hide('delete-modal');delete S.entries[curKey];save();renderCatFilter();renderList();backToList();toast('Note deleted');}
 function backToList(){curKey=null;hide('form-view');show('list-view');renderCal();}
+function openEntryByKey(key){
+  curKey=key;
+  curAttach=S.entries[curKey]?.attachments?[...S.entries[curKey].attachments]:[];
+  const datePart=key.split('_')[0];
+  const dt=new Date(datePart+'T12:00:00');
+  const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('form-date-display').textContent=`${DAYS[dt.getDay()]}, ${MONTHS[dt.getMonth()]} ${dt.getDate()}, ${dt.getFullYear()}`;
+  document.getElementById('note-title').value=S.entries[curKey]?.title||'';
+  const editor=document.getElementById('rte-editor');
+  editor.innerHTML=S.entries[curKey]?.html||'';
+  const isCommentary=filterCat==='hottakes';
+  document.querySelector('.rte-toolbar').style.display=isCommentary?'none':'flex';
+  document.getElementById('note-title').placeholder=isCommentary?'Topic or article you\'re responding to…':'Note title (optional)…';
+  editor.setAttribute('data-placeholder',isCommentary?'Capture your thought quickly — research and expand later…':'Write your note here — no rules, no format required…');
+  renderCatPills();
+  renderAttach();
+  document.getElementById('delete-btn').style.display='block';
+  hide('list-view');show('form-view');
+  calY=dt.getFullYear();calM=dt.getMonth();renderCal();
+}
 
 /* RICH TEXT */
 function fmt(cmd){document.execCommand(cmd,false,null);}
